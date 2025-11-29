@@ -7,7 +7,7 @@ import { readIndex } from "../utils/indexManager";
 const ALLOWED_ORIGINS_PATTERNS = [
   'https://69mhb6ddecje15un8c9t9amw187yeiagrodhh2k2s8oa3rktv3-h833788197.scf.usercontent.goog',
   /https:\/\/.*\.scf\.usercontent\.goog$/, // 示例：允许所有 *.scf.usercontent.goog 子域名
-  // /http:\/\/localhost:\d+$/,           // 示例：允许所有本地开发端口
+  /http:\/\/localhost:\d+$/,           // 示例：允许所有本地开发端口
 ];
 
 // 固定的 CORS 头配置（Access-Control-Allow-Origin 将动态设置）
