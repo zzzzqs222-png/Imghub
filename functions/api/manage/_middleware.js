@@ -5,7 +5,7 @@ import { checkDatabaseConfig } from "../../utils/middleware";
 import { validateApiToken } from "../../utils/tokenValidator";
 import { getDatabase } from "../../utils/databaseAdapter.js";
 // 🚨 导入 userAuthCheck 函数
-import { userAuthCheck } from "../../utils/databaseAdapter.js"; 
+import { userAuthCheck } from "../../utils/userAuth.js";
 
 
 // ==================== 动态 CORS 策略配置 ====================
