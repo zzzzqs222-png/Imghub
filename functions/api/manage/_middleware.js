@@ -5,7 +5,7 @@ import { checkDatabaseConfig } from "../../utils/middleware";
 import { validateApiToken } from "../../utils/tokenValidator";
 import { getDatabase } from "../../utils/databaseAdapter.js";
 // 🚨 导入 userAuthCheck 函数
-import { userAuthCheck } from './userAuth.js'; 
+import { userAuthCheck } from "../../utils/databaseAdapter.js"; 
 
 
 // ==================== 动态 CORS 策略配置 ====================
@@ -238,7 +238,7 @@ async function authentication(context) {
     return addCorsHeaders(unauthorizedResponse, request);
 }
 
-// 4. 更新 onRequest 数组，将 OPTIONS 检查放在第一个
+// // 4. 更新 onRequest 数组，将 OPTIONS 检查放在第一个
 export const onRequest = [
     corsPreflightCheck, 
     checkDatabaseConfig, // 检查数据库配置
