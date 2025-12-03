@@ -1,20 +1,19 @@
-// // 移除文件元数据中不需要暴露给客户端的敏感字段
-
+// 允许 CDN 缓存，must-revalidate 确保 5分钟后必须重新验证，稳定以后设置更长时间
 import { readIndex, mergeOperationsToIndex, deleteAllOperations, rebuildIndex,
     getIndexInfo, getIndexStorageStats } from '../../utils/indexManager.js';
 import { getDatabase } from '../../utils/databaseAdapter.js';
 
-// ==================== 统一的 CORS 配置和动态处理 ====================
+// ==================== 统一的 CORS 配置和动态处理 (保持不变) ====================
 
 // ✅ 动态白名单配置：这里定义允许携带凭证访问的域名模式。
 // TODO: 请根据您的实际需求修改这个数组！
 const ALLOWED_ORIGINS_PATTERNS = [
     'https://69mhb6ddecje15un8c9t9amw187yeiagrodhh2k2s8oa3rktv3-h833788197.scf.usercontent.goog',
-    /https:\/\/.*\.scf\.usercontent\.goog$/,      // 示例：允许所有 *.dynamic-app.com 子域名
-    /http:\/\/localhost:\d+$/,           // 示例：允许所有本地开发端口
+    /https:\/\/.*\.scf\.usercontent\.goog$/,    // 示例：允许所有 *.dynamic-app.com 子域名
+    /http:\/\/localhost:\d+$/,          // 示例：允许所有本地开发端口
 ];
 
-// 小工具：给任意 Response 动态加上 CORS 头
+// 小工具：给任意 Response 动态加上 CORS 头 (保持不变)
 function addCors(request, response) {
     const origin = request.headers.get('Origin');
     const newResp = new Response(response.body, response);
@@ -52,7 +51,7 @@ function addCors(request, response) {
     return newResp;
 }
 
-// ==================== 辅助工具函数：过滤敏感元数据 ====================
+// ==================== 辅助工具函数：过滤敏感元数据 (保持不变) ====================
 /**
  * 移除文件元数据中不需要暴露给客户端的敏感字段。
  * @param {Object} file - 包含 metadata 的文件对象（来自 readIndex 或 KV list）
@@ -93,12 +92,16 @@ export async function onRequest(context) {
     const { request, waitUntil } = context;
     const url = new URL(request.url);
 
+    // 🚨 缓存头部定义
+    const LIST_CACHE_HEADERS = {
+        // 建议缓存 5 分钟 (300秒)。public 允许 CDN 缓存，must-revalidate 确保 5分钟后必须重新验证。
+        "Cache-Control": "public, max-age=300, must-revalidate", 
+        "Content-Type": "application/json"
+    };
+
     // 1. 预检请求处理：使用 addCors 构造的动态头部，并返回 204
     if (request.method === "OPTIONS") {
-        // 创建一个包含动态 CORS 头的新响应
         const corsResponse = addCors(request, new Response(null, { status: 204 }));
-        
-        // 确保 Content-Length 为 0
         if (corsResponse.headers.has('Content-Length')) {
             corsResponse.headers.set('Content-Length', '0');
         }
@@ -106,7 +109,6 @@ export async function onRequest(context) {
     }
 
     // ... (其余参数解析代码不变)
-    // 解析查询参数
     let start = parseInt(url.searchParams.get('start'), 10) || 0;
     let count = parseInt(url.searchParams.get('count'), 10) || 50;
     let sum = url.searchParams.get('sum') === 'true';
@@ -137,7 +139,7 @@ export async function onRequest(context) {
     }
 
     try {
-        // ==================== 特殊操作 (使用 addCors(request, response) ) ====================
+        // ==================== 特殊操作 (保持不变，不添加 List 缓存头) ====================
         if (action === 'rebuild') {
             waitUntil(rebuildIndex(context, (processed) => {
                 console.log(`Rebuilt ${processed} files...`);
@@ -175,7 +177,7 @@ export async function onRequest(context) {
             }));
         }
 
-        // ==================== 只返回总数 (使用 addCors(request, response) ) ====================
+        // ==================== 只返回总数 (应用缓存头) ====================
         if (count === -1 && sum) {
             const result = await readIndex(context, {
                 search,
@@ -191,11 +193,11 @@ export async function onRequest(context) {
                 sum: result.totalCount,
                 indexLastUpdated: result.indexLastUpdated
             }), {
-                headers: { "Content-Type": "application/json" }
+                headers: LIST_CACHE_HEADERS // ⚠️ 应用缓存头部
             }));
         }
 
-        // ==================== 正常列表查询 (使用 addCors(request, response) ) ====================
+        // ==================== 正常列表查询 (应用缓存头) ====================
         const result = await readIndex(context, {
             search,
             directory: dir,
@@ -210,9 +212,10 @@ export async function onRequest(context) {
 
         // 索引失效时 fallback 到 KV 原始数据
         if (!result.success) {
-            const dbRecords = await getAllFileRecords(context.env, dir);
+            // 注意：这里需要确保 getAllFileRecords 是存在的
+            const dbRecords = await getAllFileRecords(context.env, dir); 
             
-            // 🚨 KV 降级路径：过滤敏感元数据
+            // KV 降级路径：过滤敏感元数据
             const filteredFiles = dbRecords.files.map(file => {
                 return filterFileMetadata(file); 
             });
@@ -225,12 +228,12 @@ export async function onRequest(context) {
                 indexLastUpdated: Date.now(),
                 isIndexedResponse: false
             }), {
-                headers: { "Content-Type": "application/json" }
+                headers: LIST_CACHE_HEADERS // ⚠️ 应用缓存头部
             }));
         }
 
         // 正常返回索引数据
-        // 🚨 索引成功路径：过滤敏感元数据
+        // 索引成功路径：过滤敏感元数据
         const compatibleFiles = result.files.map(file => {
             const filteredFile = filterFileMetadata(file); 
             return {
@@ -247,7 +250,7 @@ export async function onRequest(context) {
             indexLastUpdated: result.indexLastUpdated,
             isIndexedResponse: true
         }), {
-            headers: { "Content-Type": "application/json" }
+            headers: LIST_CACHE_HEADERS // ⚠️ 应用缓存头部
         }));
 
     } catch (error) {
@@ -262,7 +265,7 @@ export async function onRequest(context) {
     }
 }
 
-// ... (getAllFileRecords 保持不变)
+// ... (getAllFileRecords 函数保持不变)
 async function getAllFileRecords(env, dir) {
     const allRecords = [];
     let cursor = null;
@@ -327,6 +330,336 @@ async function getAllFileRecords(env, dir) {
         };
     }
 }
+
+// // 移除文件元数据中不需要暴露给客户端的敏感字段
+
+// import { readIndex, mergeOperationsToIndex, deleteAllOperations, rebuildIndex,
+//     getIndexInfo, getIndexStorageStats } from '../../utils/indexManager.js';
+// import { getDatabase } from '../../utils/databaseAdapter.js';
+
+// // ==================== 统一的 CORS 配置和动态处理 ====================
+
+// // ✅ 动态白名单配置：这里定义允许携带凭证访问的域名模式。
+// // TODO: 请根据您的实际需求修改这个数组！
+// const ALLOWED_ORIGINS_PATTERNS = [
+//     'https://69mhb6ddecje15un8c9t9amw187yeiagrodhh2k2s8oa3rktv3-h833788197.scf.usercontent.goog',
+//     /https:\/\/.*\.scf\.usercontent\.goog$/,      // 示例：允许所有 *.dynamic-app.com 子域名
+//     /http:\/\/localhost:\d+$/,           // 示例：允许所有本地开发端口
+// ];
+
+// // 小工具：给任意 Response 动态加上 CORS 头
+// function addCors(request, response) {
+//     const origin = request.headers.get('Origin');
+//     const newResp = new Response(response.body, response);
+
+//     // 默认 CORS 头部（当允许携带凭证时，这些必须被设置为固定值）
+//     const headers = {
+//         "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+//         "Access-Control-Allow-Headers": "Content-Type,Authorization,token,x-requested-with", // 移除通配符 '*'
+//         "Access-Control-Allow-Credentials": "true",
+//         "Access-Control-Max-Age": "86400",
+//         "Vary": "Origin",
+//     };
+
+//     // 检查 Origin 是否在白名单内
+//     const isAllowed = origin && ALLOWED_ORIGINS_PATTERNS.some(pattern => {
+//         if (typeof pattern === 'string') {
+//             return pattern === origin;
+//         } else {
+//             return pattern.test(origin);
+//         }
+//     });
+
+//     if (isAllowed) {
+//         // 核心步骤：动态回显 Origin
+//         headers["Access-Control-Allow-Origin"] = origin;
+//     } else if (origin) {
+//         // 如果有 Origin 但不在白名单内，则不设置 Access-Control-Allow-Origin，
+//         // 从而阻止浏览器进行 CORS 访问（安全地阻止了非法跨域请求携带凭证）。
+//         headers["Access-Control-Allow-Credentials"] = "false"; // 禁用凭证，但仍然可以使用其他非凭证请求
+//     }
+    
+//     // 设置头部到响应中
+//     Object.entries(headers).forEach(([k, v]) => newResp.headers.set(k, v));
+    
+//     return newResp;
+// }
+
+// // ==================== 辅助工具函数：过滤敏感元数据 ====================
+// /**
+//  * 移除文件元数据中不需要暴露给客户端的敏感字段。
+//  * @param {Object} file - 包含 metadata 的文件对象（来自 readIndex 或 KV list）
+//  * @returns {Object} 过滤后的文件对象
+//  */
+// function filterFileMetadata(file) {
+//     const sensitiveKeys = [
+//         "UploadIP",
+//         "UploadAddress",
+//         "Channel",
+//         "ChannelName",
+//         "TgFileId",
+//         "TgChatId",
+//         "TgBotToken"
+//     ];
+
+//     // 确保 file.metadata 存在且是一个对象
+//     if (!file.metadata || typeof file.metadata !== 'object') {
+//         return file;
+//     }
+
+//     // 深拷贝 metadata 以避免修改原始对象
+//     const newMetadata = { ...file.metadata };
+
+//     // 移除敏感字段
+//     sensitiveKeys.forEach(key => {
+//         delete newMetadata[key];
+//     });
+
+//     return {
+//         ...file, // 保持 name/id 等其他字段不变
+//         metadata: newMetadata
+//     };
+// }
+
+// // ==================== 主函数 ====================
+// export async function onRequest(context) {
+//     const { request, waitUntil } = context;
+//     const url = new URL(request.url);
+
+//     // 1. 预检请求处理：使用 addCors 构造的动态头部，并返回 204
+//     if (request.method === "OPTIONS") {
+//         // 创建一个包含动态 CORS 头的新响应
+//         const corsResponse = addCors(request, new Response(null, { status: 204 }));
+        
+//         // 确保 Content-Length 为 0
+//         if (corsResponse.headers.has('Content-Length')) {
+//             corsResponse.headers.set('Content-Length', '0');
+//         }
+//         return corsResponse;
+//     }
+
+//     // ... (其余参数解析代码不变)
+//     // 解析查询参数
+//     let start = parseInt(url.searchParams.get('start'), 10) || 0;
+//     let count = parseInt(url.searchParams.get('count'), 10) || 50;
+//     let sum = url.searchParams.get('sum') === 'true';
+//     let recursive = url.searchParams.get('recursive') === 'true';
+//     let dir = url.searchParams.get('dir') || '';
+//     let search = url.searchParams.get('search') || '';
+//     let channel = url.searchParams.get('channel') || '';
+//     let listType = url.searchParams.get('listType') || '';
+//     let action = url.searchParams.get('action') || '';
+//     let includeTags = url.searchParams.get('includeTags') || '';
+//     let excludeTags = url.searchParams.get('excludeTags') || '';
+
+//     // 处理搜索关键字
+//     if (search) {
+//         search = decodeURIComponent(search).trim();
+//     }
+
+//     // 处理标签参数
+//     const includeTagsArray = includeTags ? includeTags.split(',').map(t => t.trim()).filter(t => t) : [];
+//     const excludeTagsArray = excludeTags ? excludeTags.split(',').map(t => t.trim()).filter(t => t) : [];
+
+//     // 处理目录参数
+//     if (dir.startsWith('/')) {
+//         dir = dir.substring(1);
+//     }
+//     if (dir && !dir.endsWith('/')) {
+//         dir += '/';
+//     }
+
+//     try {
+//         // ==================== 特殊操作 (使用 addCors(request, response) ) ====================
+//         if (action === 'rebuild') {
+//             waitUntil(rebuildIndex(context, (processed) => {
+//                 console.log(`Rebuilt ${processed} files...`);
+//             }));
+//             return addCors(request, new Response('Index rebuilt asynchronously', {
+//                 headers: { "Content-Type": "text/plain" }
+//             }));
+//         }
+
+//         if (action === 'merge-operations') {
+//             waitUntil(mergeOperationsToIndex(context));
+//             return addCors(request, new Response('Operations merged into index asynchronously', {
+//                 headers: { "Content-Type": "text/plain" }
+//             }));
+//         }
+
+//         if (action === 'delete-operations') {
+//             waitUntil(deleteAllOperations(context));
+//             return addCors(request, new Response('All operations deleted asynchronously', {
+//                 headers: { "Content-Type": "text/plain" }
+//             }));
+//         }
+
+//         if (action === 'index-storage-stats') {
+//             const stats = await getIndexStorageStats(context);
+//             return addCors(request, new Response(JSON.stringify(stats), {
+//                 headers: { "Content-Type": "application/json" }
+//             }));
+//         }
+
+//         if (action === 'info') {
+//             const info = await getIndexInfo(context);
+//             return addCors(request, new Response(JSON.stringify(info), {
+//                 headers: { "Content-Type": "application/json" }
+//             }));
+//         }
+
+//         // ==================== 只返回总数 (使用 addCors(request, response) ) ====================
+//         if (count === -1 && sum) {
+//             const result = await readIndex(context, {
+//                 search,
+//                 directory: dir,
+//                 channel,
+//                 listType,
+//                 includeTags: includeTagsArray,
+//                 excludeTags: excludeTagsArray,
+//                 countOnly: true
+//             });
+
+//             return addCors(request, new Response(JSON.stringify({
+//                 sum: result.totalCount,
+//                 indexLastUpdated: result.indexLastUpdated
+//             }), {
+//                 headers: { "Content-Type": "application/json" }
+//             }));
+//         }
+
+//         // ==================== 正常列表查询 (使用 addCors(request, response) ) ====================
+//         const result = await readIndex(context, {
+//             search,
+//             directory: dir,
+//             start,
+//             count,
+//             channel,
+//             listType,
+//             includeTags: includeTagsArray,
+//             excludeTags: excludeTagsArray,
+//             includeSubdirFiles: recursive,
+//         });
+
+//         // 索引失效时 fallback 到 KV 原始数据
+//         if (!result.success) {
+//             const dbRecords = await getAllFileRecords(context.env, dir);
+            
+//             // 🚨 KV 降级路径：过滤敏感元数据
+//             const filteredFiles = dbRecords.files.map(file => {
+//                 return filterFileMetadata(file); 
+//             });
+
+//             return addCors(request, new Response(JSON.stringify({
+//                 files: filteredFiles, // 使用过滤后的文件列表
+//                 directories: dbRecords.directories,
+//                 totalCount: dbRecords.totalCount,
+//                 returnedCount: dbRecords.returnedCount,
+//                 indexLastUpdated: Date.now(),
+//                 isIndexedResponse: false
+//             }), {
+//                 headers: { "Content-Type": "application/json" }
+//             }));
+//         }
+
+//         // 正常返回索引数据
+//         // 🚨 索引成功路径：过滤敏感元数据
+//         const compatibleFiles = result.files.map(file => {
+//             const filteredFile = filterFileMetadata(file); 
+//             return {
+//                 name: filteredFile.id,
+//                 metadata: filteredFile.metadata
+//             };
+//         });
+
+//         return addCors(request, new Response(JSON.stringify({
+//             files: compatibleFiles,
+//             directories: result.directories,
+//             totalCount: result.totalCount,
+//             returnedCount: result.returnedCount,
+//             indexLastUpdated: result.indexLastUpdated,
+//             isIndexedResponse: true
+//         }), {
+//             headers: { "Content-Type": "application/json" }
+//         }));
+
+//     } catch (error) {
+//         console.error('Error in list-indexed API:', error);
+//         return addCors(request, new Response(JSON.stringify({
+//             error: 'Internal server error',
+//             message: error.message
+//         }), {
+//             status: 500,
+//             headers: { "Content-Type": "application/json" }
+//         }));
+//     }
+// }
+
+// // ... (getAllFileRecords 保持不变)
+// async function getAllFileRecords(env, dir) {
+//     const allRecords = [];
+//     let cursor = null;
+//     try {
+//         const db = getDatabase(env);
+//         while (true) {
+//             const response = await db.list({
+//                 prefix: dir,
+//                 limit: 1000,
+//                 cursor: cursor
+//             });
+
+//             if (!response || !response.keys || !Array.isArray(response.keys)) {
+//                 console.error('Invalid response from database list:', response);
+//                 break;
+//             }
+
+//             cursor = response.cursor;
+//             for (const item of response.keys) {
+//                 if (item.name.startsWith('manage@') || item.name.startsWith('chunk_')) {
+//                     continue;
+//                 }
+//                 if (!item.metadata || !item.metadata.TimeStamp) {
+//                     continue;
+//                 }
+//                 allRecords.push(item);
+//             }
+
+//             if (!cursor) break;
+
+//             // 协作点，避免阻塞
+//             await new Promise(resolve => setTimeout(resolve, 10));
+//         }
+
+//         // 提取子目录
+//         const directories = new Set();
+//         const filteredRecords = [];
+//         allRecords.forEach(item => {
+//             const subDir = item.name.substring(dir.length);
+//             const firstSlashIndex = subDir.indexOf('/');
+//             if (firstSlashIndex !== -1) {
+//                 directories.add(dir + subDir.substring(0, firstSlashIndex));
+//             } else {
+//                 filteredRecords.push(item);
+//             }
+//         });
+
+//         return {
+//             files: filteredRecords,
+//             directories: Array.from(directories),
+//             totalCount: allRecords.length,
+//             returnedCount: filteredRecords.length
+//         };
+//     } catch (error) {
+//         console.error('Error in getAllFileRecords:', error);
+//         return {
+//             files: [],
+//             directories: [],
+//             totalCount: 0,
+//             returnedCount: 0,
+//             error: error.message
+//         };
+//     }
+// }
 
 // // CORS 配置和动态处理
 // import { readIndex, mergeOperationsToIndex, deleteAllOperations, rebuildIndex,
