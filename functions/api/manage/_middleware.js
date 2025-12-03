@@ -148,13 +148,19 @@ async function authentication(context) {
     
     // --- 识别敏感操作和管理路径 ---
     const action = url.searchParams.get('action');
-    const SENSITIVE_ACTIONS = [
+    
+    // 1. 基于 action 参数的敏感操作
+    const SENSITIVE_ACTIONS_VIA_ACTION = [
         'rebuild', 'merge-operations', 'delete-operations',
         'index-storage-stats', 'info'
     ];
-    const isSensitiveAction = SENSITIVE_ACTIONS.includes(action);
+    const isSensitiveActionViaAction = SENSITIVE_ACTIONS_VIA_ACTION.includes(action);
+    // 2. 基于 'recursive' 参数的敏感操作检查
+    const isSensitiveRecursiveList = url.searchParams.has('recursive') && (action === null || action === 'list'); 
+    // 3. 检查路径是否是 apiTokens.js
     const IS_TOKEN_MANAGEMENT_API = pathname.includes('/apitokens'); 
-    const isActionRequiringAdmin = isSensitiveAction || IS_TOKEN_MANAGEMENT_API; 
+    // 最终权限判断：任何一个条件成立，都需要管理员权限
+    const isActionRequiringAdmin = isSensitiveActionViaAction || IS_TOKEN_MANAGEMENT_API || isSensitiveRecursiveList;
     // -----------------------------
 
     // 读取安全配置
